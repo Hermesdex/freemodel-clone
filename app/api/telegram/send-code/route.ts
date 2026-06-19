@@ -1,30 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendOtp } from '@/lib/tgauth';
-import type { SendOtpRequest, ApiResponse } from '@/types';
+import { sendGatewayOtp } from '@/lib/telegram-gateway';
+import type { ApiResponse } from '@/types';
 
-// In-memory phone -> { otp, expiresAt }
-const phoneOtpStore = new Map<string, { otp: string; expiresAt: number }>();
+// In-memory phone -> { requestId?, expiresAt, attempts }
+const phoneGatewayStore = new Map<string, { requestId?: string; expiresAt: number; attempts: number }>();
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const body = (await request.json()) as Partial<SendOtpRequest>;
+    const body = (await request.json()) as { phone?: string };
     const { phone } = body;
 
     if (!phone) {
       return NextResponse.json<ApiResponse>({ success: false, error: 'Phone is required' }, { status: 400 });
     }
 
-    const otp = Math.floor(10000 + Math.random() * 90000).toString();
-    const tgauthResult = await sendOtp({ phone });
-    if (!tgauthResult.success) {
-      return NextResponse.json<ApiResponse>({ success: false, error: tgauthResult.message }, { status: 400 });
+    const normalized = phone.replace(/\D/g, '');
+    const existing = phoneGatewayStore.get(normalized);
+
+    if (existing && Date.now() < existing.expiresAt && existing.attempts >= 5) {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: 'Too many attempts. Please wait before requesting a new code.' },
+        { status: 429 },
+      );
     }
 
-    phoneOtpStore.set(phone, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
+    const result = await sendGatewayOtp(normalized);
 
-    return NextResponse.json<ApiResponse<{ expiresIn: number }>>({ success: true, data: { expiresIn: 300 } });
+    if (!result.success) {
+      return NextResponse.json<ApiResponse>({ success: false, error: result.error || 'Gagal mengirim OTP' }, { status: 400 });
+    }
+
+    phoneGatewayStore.set(normalized, {
+      requestId: result.data?.requestId,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+      attempts: existing ? existing.attempts + 1 : 1,
+    });
+
+    return NextResponse.json<ApiResponse<{ expiresIn: number }>>(
+      { success: true, data: { expiresIn: 300 } },
+      { status: 200 },
+    );
   } catch (error) {
-    console.error('Send OTP error:', error);
+    console.error('Send Gateway OTP error:', error);
     return NextResponse.json<ApiResponse>({ success: false, error: 'Server error' }, { status: 500 });
   }
 }
