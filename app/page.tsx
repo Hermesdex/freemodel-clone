@@ -126,10 +126,10 @@ export default function DashboardPage() {
           <h2 id="keys-heading" className="text-xl font-semibold text-fm-text">API Keys</h2>
           <ApiKeysPanel
             keys={keys}
+            maxKeys={5}
             onCreateKey={handleCreateKey}
             onRevokeKey={handleRevokeKey}
             onDeleteKey={handleDeleteKey}
-            onToggleKey={handleToggleKey}
             onCopyKey={handleCopyKey}
             creatingKey={creatingKey}
           />

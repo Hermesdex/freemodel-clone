@@ -29,22 +29,22 @@ const demoStats: Stats = {
 const demoApiKeys: ApiKey[] = [
   {
     id: 'key_1',
-    name: 'Production Server',
-    key: 'sk-fm-prod-abc123def456...',
-    prefix: 'sk-fm-prod',
-    createdAt: '2026-05-15',
-    lastUsed: '2026-06-19',
+    name: 'Kola',
+    key: 'fe_oa_...d0f8...',
+    prefix: 'fe_oa_prod',
+    createdAt: '2026-06-05',
+    lastUsed: '2026-06-05',
     requests: 12450,
     tokens: 892000,
     isActive: true,
   },
   {
     id: 'key_2',
-    name: 'Development',
-    key: 'sk-fm-dev-xyz789uvw012...',
-    prefix: 'sk-fm-dev',
-    createdAt: '2026-06-01',
-    lastUsed: '2026-06-18',
+    name: 'Haina',
+    key: 'fe_oa_...c9dd...',
+    prefix: 'fe_oa_dev',
+    createdAt: '2026-06-04',
+    lastUsed: '2026-06-04',
     requests: 3420,
     tokens: 156000,
     isActive: true,
@@ -55,15 +55,16 @@ userStore.set(DEMO_USER_ID, demoUser);
 statsStore.set(DEMO_USER_ID, demoStats);
 apiKeyStore.set(DEMO_USER_ID, demoApiKeys);
 
-// Generate secure API key
+// Generate secure API key (FreeModel style: fe_oa_...)
 export function generateApiKey(): { prefix: string; key: string; fullKey: string } {
-  const prefix = 'sk-fm';
+  const prefix = 'fe_oa';
   const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(24)))
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
-  const key = `${prefix}-${randomPart.slice(0, 8)}-${randomPart.slice(8, 20)}`;
-  const fullKey = `sk-fm-${randomPart}`;
-  return { prefix: key, key: `${key}...`, fullKey };
+  // Format: fe_oa_xxxxxxxxxxxxxxxx (24 hex chars after prefix)
+  const key = `${prefix}_${randomPart.slice(0, 8)}...${randomPart.slice(-4)}`;
+  const fullKey = `${prefix}_${randomPart}`;
+  return { prefix: `${prefix}_${randomPart.slice(0, 4)}`, key, fullKey };
 }
 
 // User functions

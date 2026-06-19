@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ApiKeysPanel } from '@/components/ApiKeysPanel';
-import { getApiKeys, createApiKey, revokeApiKey, deleteApiKey, toggleApiKey } from '@/lib/storage';
+import { getApiKeys, createApiKey, revokeApiKey, deleteApiKey } from '@/lib/storage';
 import { useToast } from '@/components/Toast';
 import { useState } from 'react';
 
@@ -14,18 +14,13 @@ export default function KeysPage() {
   const handleCreateKey = async (name: string, phoneNumber: string) => {
     setCreatingKey(true);
     try {
-      // API creation handled in ApiKeysPanel
       addToast({
         type: 'success',
-        title: 'Creating API Key...',
+        title: 'Creating key...',
         message: `Verifying ${phoneNumber} and creating "${name}"`,
       });
     } catch {
-      addToast({
-        type: 'error',
-        title: 'Failed',
-        message: 'Please try again',
-      });
+      addToast({ type: 'error', title: 'Failed', message: 'Please try again' });
     } finally {
       setCreatingKey(false);
     }
@@ -36,7 +31,7 @@ export default function KeysPage() {
       const success = revokeApiKey('user_coinpump', keyId);
       if (success) {
         setKeys(prev => prev.map(k => k.id === keyId ? { ...k, isActive: false } : k));
-        addToast({ type: 'success', title: 'Key Revoked', message: 'API key has been revoked' });
+        addToast({ type: 'success', title: 'Key revoked', message: 'API key has been revoked' });
       }
     } catch {
       addToast({ type: 'error', title: 'Failed', message: 'Please try again' });
@@ -48,19 +43,7 @@ export default function KeysPage() {
       const success = deleteApiKey('user_coinpump', keyId);
       if (success) {
         setKeys(prev => prev.filter(k => k.id !== keyId));
-        addToast({ type: 'success', title: 'Key Deleted', message: 'API key permanently deleted' });
-      }
-    } catch {
-      addToast({ type: 'error', title: 'Failed', message: 'Please try again' });
-    }
-  };
-
-  const handleToggleKey = async (keyId: string) => {
-    try {
-      const key = toggleApiKey('user_coinpump', keyId);
-      if (key) {
-        setKeys(prev => prev.map(k => k.id === keyId ? key : k));
-        addToast({ type: 'success', title: key.isActive ? 'Activated' : 'Deactivated', message: `Key ${key.isActive ? 'activated' : 'deactivated'}` });
+        addToast({ type: 'success', title: 'Key deleted', message: 'API key permanently deleted' });
       }
     } catch {
       addToast({ type: 'error', title: 'Failed', message: 'Please try again' });
@@ -76,16 +59,16 @@ export default function KeysPage() {
     <DashboardLayout>
       <div className="mb-8">
         <p className="text-xs font-medium uppercase tracking-wider text-fm-text-dim mb-1">§ API KEYS</p>
-        <h1 className="text-3xl font-bold text-fm-text">API Keys</h1>
+        <h1 className="text-3xl font-bold text-fm-text">API keys</h1>
         <p className="text-fm-text-muted mt-1">Manage your API keys for secure access to FreeModel</p>
       </div>
 
       <ApiKeysPanel
         keys={keys}
+        maxKeys={5}
         onCreateKey={handleCreateKey}
         onRevokeKey={handleRevokeKey}
         onDeleteKey={handleDeleteKey}
-        onToggleKey={handleToggleKey}
         onCopyKey={handleCopyKey}
         creatingKey={creatingKey}
       />
