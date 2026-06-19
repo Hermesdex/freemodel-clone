@@ -14,7 +14,8 @@ const otpStore = new Map<string, {
 }>();
 
 export function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  // 5 digits: 10000-99999
+  return Math.floor(10000 + Math.random() * 90000).toString();
 }
 
 export function formatPhoneNumber(phone: string): string {
@@ -35,7 +36,7 @@ export function formatPhoneNumber(phone: string): string {
   return '62' + digits;
 }
 
-export async function sendTelegramMessage(message: TelegramMessage): Promise<boolean> {
+export async function sendTelegramMessage(message: TelegramMessage): Promise<{success: boolean; error?: string}> {
   try {
     const response = await fetch(`${API_URL}/sendMessage`, {
       method: 'POST',
@@ -44,10 +45,14 @@ export async function sendTelegramMessage(message: TelegramMessage): Promise<boo
     });
     
     const data = await response.json();
-    return data.ok === true;
+    if (!data.ok) {
+      console.error('Telegram API error:', data);
+      return { success: false, error: data.description || 'Telegram API error' };
+    }
+    return { success: true };
   } catch (error) {
     console.error('Telegram send error:', error);
-    return false;
+    return { success: false, error: 'Network error' };
   }
 }
 
@@ -64,14 +69,13 @@ export async function sendOtpToTelegram(phoneNumber: string, otp: string): Promi
 ⚠️ Jangan bagikan kode ini ke siapapun. Tim FreeModel tidak akan meminta OTP Anda.
   `.trim();
 
-  const sent = await sendTelegramMessage({
+  const result = await sendTelegramMessage({
     chat_id: parseInt(CHAT_ID),
     text: message,
     parse_mode: 'HTML',
   });
 
-  if (sent) {
-    // Store OTP with 5-minute expiry
+  if (result.success) {
     otpStore.set(formattedPhone, {
       otp,
       expiresAt: Date.now() + 5 * 60 * 1000,
@@ -86,9 +90,17 @@ export async function sendOtpToTelegram(phoneNumber: string, otp: string): Promi
     };
   }
 
+  // Provide specific error message
+  let errorMsg = 'Gagal mengirim OTP. Coba lagi nanti.';
+  if (result.error?.includes('chat not found') || result.error?.includes('blocked')) {
+    errorMsg = 'Bot tidak bisa mengirim pesan. Silakan mulai chat dengan @Denzoow_bot terlebih dahulu (kirim /start).';
+  } else if (result.error?.includes('unauthorized')) {
+    errorMsg = 'Token bot tidak valid. Hubungi admin.';
+  }
+
   return {
     success: false,
-    message: 'Gagal mengirim OTP. Coba lagi nanti.',
+    message: errorMsg,
     expiresIn: 0,
   };
 }

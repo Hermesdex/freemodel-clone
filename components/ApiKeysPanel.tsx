@@ -68,8 +68,8 @@ export function ApiKeysPanel({
   }, [phoneNumber]);
 
   const handleVerifyOtp = useCallback(async () => {
-    if (!otp.trim() || otp.length !== 6) {
-      setError('6-digit OTP required');
+    if (!otp.trim() || otp.length !== 5) {
+      setError('5-digit OTP required');
       return;
     }
     setError('');
@@ -284,7 +284,7 @@ export function ApiKeysPanel({
                     />
                   </div>
                   <p className="text-sm text-fm-text-dim">
-                    We'll send a 6-digit OTP to your Telegram. Make sure the number is registered.
+                    We'll send a 5-digit OTP to your Telegram. Make sure the number is registered.
                   </p>
                   {error && <p className="text-sm text-fm-red">{error}</p>}
                 </div>
@@ -296,15 +296,15 @@ export function ApiKeysPanel({
               <div className="modal-body">
                 <div className="space-y-4">
                   <div>
-                    <label className="input-label">OTP code (6 digits)</label>
+                    <label className="input-label">OTP code (5 digits)</label>
                     <input
                       type="text"
                       value={otp}
-                      onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
-                      placeholder="123456"
+                      onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 5)); setError(''); }}
+                      placeholder="12345"
                       className="input-field text-2xl tracking-widest text-center font-mono"
                       autoFocus
-                      maxLength={6}
+                      maxLength={5}
                     />
                   </div>
                   <p className="text-sm text-fm-text-dim text-center">
