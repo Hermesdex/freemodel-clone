@@ -1,7 +1,7 @@
 'use client';
 
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { StatCards } from '@/components/StatCards';
+import { DashboardStats } from '@/components/StatCards';
 import { ApiKeysPanel } from '@/components/ApiKeysPanel';
 import { getStats, getApiKeys, createApiKey, revokeApiKey, deleteApiKey, toggleApiKey } from '@/lib/storage';
 import { useToast } from '@/components/Toast';
@@ -118,7 +118,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Grid */}
-      <StatCards stats={stats!} />
+      <DashboardStats stats={stats!} />
 
       {/* API Keys Section */}
       <section className="mt-10" aria-labelledby="keys-heading">

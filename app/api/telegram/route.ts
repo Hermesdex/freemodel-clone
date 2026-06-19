@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendOtpToTelegram, verifyOtp, isOtpVerified, consumeOtpVerification } from '@/lib/telegram';
+import { sendOtpToTelegram, verifyOtp, isOtpVerified, consumeOtpVerification, generateOtp } from '@/lib/telegram';
 import { createApiKey } from '@/lib/storage';
 import type { ApiResponse, SendOtpResponse, CreateKeyResponse } from '@/types';
 
@@ -17,7 +17,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }, { status: 400 });
       }
 
-      const result = await sendOtpToTelegram(phoneNumber);
+      // Generate OTP first
+      const generatedOtp = generateOtp();
+      const result = await sendOtpToTelegram(phoneNumber, generatedOtp);
       return NextResponse.json<SendOtpResponse>(result, { 
         status: result.success ? 200 : 500 
       });
