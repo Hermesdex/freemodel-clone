@@ -3,7 +3,7 @@
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { DashboardStats } from '@/components/StatCards';
 import { ApiKeysPanel } from '@/components/ApiKeysPanel';
-import { getStats, getApiKeys, createApiKey, revokeApiKey, deleteApiKey, toggleApiKey } from '@/lib/storage';
+import { getStats, getApiKeys, createApiKey, revokeApiKey, deleteApiKey } from '@/lib/storage';
 import { useToast } from '@/components/Toast';
 import { useState } from 'react';
 
@@ -13,7 +13,7 @@ export default function DashboardPage() {
   const [keys, setKeys] = useState(() => getApiKeys());
   const [creatingKey, setCreatingKey] = useState(false);
 
-  const handleCreateKey = async (name: string, phoneNumber: string) => {
+  const handleCreateKey = async (name: string, telegramId: number, sessionToken: string) => {
     setCreatingKey(true);
     try {
       // The actual creation happens in the ApiKeysPanel via API calls
@@ -73,26 +73,6 @@ export default function DashboardPage() {
       addToast({
         type: 'error',
         title: 'Failed to Delete',
-        message: 'Please try again',
-      });
-    }
-  };
-
-  const handleToggleKey = async (keyId: string) => {
-    try {
-      const key = toggleApiKey('user_coinpump', keyId);
-      if (key) {
-        setKeys(prev => prev.map(k => k.id === keyId ? key : k));
-        addToast({
-          type: 'success',
-          title: key.isActive ? 'Key Activated' : 'Key Deactivated',
-          message: `API key has been ${key.isActive ? 'activated' : 'deactivated'}`,
-        });
-      }
-    } catch {
-      addToast({
-        type: 'error',
-        title: 'Failed to Toggle',
         message: 'Please try again',
       });
     }

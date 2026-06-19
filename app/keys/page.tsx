@@ -11,13 +11,15 @@ export default function KeysPage() {
   const [keys, setKeys] = useState(() => getApiKeys());
   const [creatingKey, setCreatingKey] = useState(false);
 
-  const handleCreateKey = async (name: string, phoneNumber: string) => {
+  const handleCreateKey = async (name: string, telegramId: number, sessionToken: string) => {
     setCreatingKey(true);
     try {
+      // Key creation happens in ApiKeysPanel via API call
+      // This is just for UI state tracking
       addToast({
         type: 'success',
         title: 'Creating key...',
-        message: `Verifying ${phoneNumber} and creating "${name}"`,
+        message: `Telegram auth verified for user ${telegramId}, creating "${name}"`,
       });
     } catch {
       addToast({ type: 'error', title: 'Failed', message: 'Please try again' });

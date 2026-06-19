@@ -1,15 +1,40 @@
-import { useState, useCallback } from 'react';
+'use client';
+
+import { useState, useCallback, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import type { ApiKey } from '@/types';
-
+import { useToast } from '@/components/Toast';
 interface ApiKeysPanelProps {
   keys: ApiKey[];
   maxKeys: number;
-  onCreateKey: (name: string, phoneNumber: string) => Promise<void>;
+  onCreateKey: (name: string, telegramId: number, sessionToken: string) => Promise<void>;
   onRevokeKey: (keyId: string) => Promise<void>;
   onDeleteKey: (keyId: string) => Promise<void>;
   onCopyKey: (key: string, rawKey?: string) => void;
   creatingKey?: boolean;
+}
+declare global {
+  interface Window {
+    TelegramLoginWidget: (options: {
+      bot_id: string;
+      size?: 'large' | 'medium' | 'small';
+      corner_radius?: number;
+      request_access?: 'write';
+      lang?: string;
+      onauth: (user: TelegramUser) => void;
+    }) => void;
+  }
+}
+
+interface TelegramUser {
+  id: number;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  auth_date: number;
+  hash: string;
+  phone_number?:string;
 }
 
 export function ApiKeysPanel({
@@ -18,18 +43,27 @@ export function ApiKeysPanel({
   onCreateKey,
   onRevokeKey,
   onDeleteKey,
-  onToggleKey,
   onCopyKey,
   creatingKey,
 }: ApiKeysPanelProps) {
+  const { addToast } = useToast();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [keyName, setKeyName] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [otp, setOtp] = useState('');
-  const [step, setStep] = useState<'name' | 'phone' | 'otp' | 'success'>('name');
+  const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
+  const [step, setStep] = useState<'name' | 'telegram' | 'success'>('name');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [rawKey, setRawKey] = useState<string | null>(null);
+
+  // Reset modal state
+  const handleClose = useCallback(() => {
+    setShowCreateModal(false);
+    setKeyName('');
+    setTelegramUser(null);
+    setStep('name');
+    setError('');
+    setRawKey(null);
+  }, []);
 
   const handleCreateStart = useCallback(() => {
     if (!keyName.trim()) {
@@ -37,89 +71,97 @@ export function ApiKeysPanel({
       return;
     }
     setError('');
-    setStep('phone');
+    setStep('telegram');
   }, [keyName]);
 
-  const handleSendOtp = useCallback(async () => {
-    if (!phoneNumber.trim()) {
-      setError('Telegram number is required');
-      return;
-    }
+  const handleTelegramAuth = useCallback(async (user: TelegramUser) => {
+    setTelegramUser(user);
     setError('');
     setLoading(true);
+    
     try {
-      const res = await fetch('/api/telegram', {
+      // Verify auth data with backend
+      const res = await fetch('/api/telegram/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'send-otp', phoneNumber }),
+        body: JSON.stringify({ 
+          action: 'verify-login',
+          authData: user 
+        }),
       });
       const data = await res.json();
+      
       if (data.success) {
-        setStep('otp');
-        setOtp('');
-      } else {
-        setError(data.message || 'Failed to send OTP');
-      }
-    } catch {
-      setError('Network error');
-    } finally {
-      setLoading(false);
-    }
-  }, [phoneNumber]);
-
-  const handleVerifyOtp = useCallback(async () => {
-    if (!otp.trim() || otp.length !== 5) {
-      setError('5-digit OTP required');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    try {
-      const res = await fetch('/api/telegram', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify-otp', phoneNumber, otp }),
-      });
-      const data = await res.json();
-      if (data.success) {
+        // Create the API key
         const createRes = await fetch('/api/keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'create', keyName, phoneNumber }),
+          body: JSON.stringify({ 
+            action: 'create', 
+            keyName,
+            telegramId: user.id,
+            sessionToken: data.data.sessionToken 
+          }),
         });
         const createData = await createRes.json();
+        
         if (createData.success) {
           setRawKey(createData.rawKey);
           setStep('success');
+          addToast({
+            type: 'success',
+            title: 'Key created!',
+            message: `API key "${keyName}" created via Telegram auth`,
+          });
         } else {
           setError(createData.error || 'Failed to create key');
         }
       } else {
-        setError(data.message || 'Invalid OTP');
+        setError(data.error || 'Telegram authentication failed');
       }
     } catch {
-      setError('Network error');
+      setError('Network error during authentication');
     } finally {
       setLoading(false);
     }
-  }, [otp, phoneNumber, keyName]);
-
-  const handleClose = useCallback(() => {
-    setShowCreateModal(false);
-    setKeyName('');
-    setPhoneNumber('');
-    setOtp('');
-    setStep('name');
-    setError('');
-    setRawKey(null);
-  }, []);
+  }, [keyName, addToast]);
 
   const handleCopyRawKey = useCallback(() => {
     if (rawKey) {
       navigator.clipboard.writeText(rawKey);
       setRawKey(null);
+      addToast({ type: 'success', title: 'Copied!', message: 'API key copied to clipboard' });
     }
-  }, [rawKey]);
+  }, [rawKey, addToast]);
+
+  // Load Telegram Login Widget script
+  useEffect(() => {
+    if (showCreateModal && step === 'telegram') {
+      const script = document.createElement('script');
+      script.src = 'https://telegram.org/js/telegram-widget.js?22';
+      script.async = true;
+      script.onload = () => {
+        if (window.TelegramLoginWidget) {
+          window.TelegramLoginWidget({
+            bot_id: process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || 'Denzoow_bot',
+            size: 'large',
+            corner_radius: 20,
+            request_access: 'write', // Request phone number
+            lang: 'en',
+            onauth: handleTelegramAuth,
+          });
+        }
+      };
+      document.body.appendChild(script);
+      
+      return () => {
+        document.body.removeChild(script);
+        // Clean up widget if needed
+        const widget = document.getElementById('telegram-login-widget');
+        if (widget) widget.remove();
+      };
+    }
+  }, [showCreateModal, step, handleTelegramAuth]);
 
   // Mask secret for display: fe_oa_abc123...xyz789 -> fe_oa_...........xyz789
   const maskSecret = (secret: string): string => {
@@ -131,23 +173,22 @@ export function ApiKeysPanel({
 
   return (
     <>
-      {/* Header with button and counter */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <button
-          onClick={() => setShowCreateModal(true)}
-          disabled={creatingKey || keys.length >= maxKeys}
-          className="btn-primary w-full sm:w-auto flex items-center justify-center gap-2"
-          title={keys.length >= maxKeys ? `Maximum ${maxKeys} keys reached` : ''}
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          <span>Create key</span>
-        </button>
+      {/* Create Key Button */}
+      <button
+        onClick={() => setShowCreateModal(true)}
+        disabled={creatingKey || keys.length >= maxKeys}
+        className="btn-primary w-full sm:w-auto flex items-center justify-center gap-2"
+        title={keys.length >= maxKeys ? `Maximum ${maxKeys} keys reached` : ''}
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+        </svg>
+        <span>Create key</span>
+      </button>
 
-        <div className="text-center sm:text-right text-sm text-fm-text-muted">
-          <span className="font-mono text-fm-text">{keys.length} / {maxKeys}</span>
-        </div>
+      {/* Counter */}
+      <div className="text-center sm:text-right text-sm text-fm-text-muted mt-4 sm:mt-0">
+        <span className="font-mono text-fm-text">{keys.length} / {maxKeys}</span>
       </div>
 
       {/* Description */}
@@ -261,71 +302,54 @@ export function ApiKeysPanel({
                     />
                   </div>
                   <p className="text-sm text-fm-text-dim">
-                    Give your key a memorable name. Telegram verification required for security.
+                    Give your key a memorable name. Telegram authentication required for security.
                   </p>
                   {error && <p className="text-sm text-fm-red">{error}</p>}
                 </div>
               </div>
             )}
 
-            {/* Step 2: Phone Number */}
-            {step === 'phone' && (
+            {/* Step 2: Telegram Login Widget */}
+            {step === 'telegram' && (
               <div className="modal-body">
                 <div className="space-y-4">
-                  <div>
-                    <label className="input-label">Telegram number</label>
-                    <input
-                      type="tel"
-                      value={phoneNumber}
-                      onChange={e => { setPhoneNumber(e.target.value); setError(''); }}
-                      placeholder="+62 8xx xxx xxxx"
-                      className="input-field"
-                      autoFocus
-                    />
+                  <div className="text-center py-4">
+                    <svg className="w-16 h-16 mx-auto mb-4 text-fm-blue" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 11.944 0zm4.931 7.614l-1.342 1.277c-.287.295-.729.246-1.013-.082l-3.178-3.678c-.81-.913-3.093-.33-3.379 1.129l-.536 2.766 2.999 3.214c.207.213.183.562-.028.762l-1.492 1.437c-.316.295-.8-.038-1.029-.367l-2.492-3.605v.008c-.123 3.937 3.195 7.145 7.098 6.63.231-.031.469-.041.713-.041.53 0 1.055.043 1.567.122.375.059.745.145 1.091.293l3.603 2.039c.751.414 1.742-.004 2.038-.854l.524-1.609c.08-.267.074-.552.006-.812l-1.774-6.813c-.164-.572-.673-.94-1.233-.836z"/>
+                    </svg>
+                    <h3 className="text-lg font-semibold text-fm-text mb-2">Authenticate with Telegram</h3>
+                    <p className="text-fm-text-muted mb-4">
+                      Click the button below to authenticate via Telegram.<br/>
+                      You'll be asked to grant access to your phone number.
+                    </p>
+                    <div id="telegram-login-widget" className="inline-block"></div>
                   </div>
+                  
                   <div className="bg-fm-bg border border-fm-border rounded-lg p-4">
-                    <p className="text-sm text-fm-text mb-2 font-medium">⚠️ First time? Register your number:</p>
+                    <p className="text-sm text-fm-text mb-2 font-medium">What happens next:</p>
                     <ol className="text-sm text-fm-text-dim space-y-1 list-decimal list-inside">
-                      <li>Open Telegram and search <strong>@Denzoow_bot</strong></li>
-                      <li>Send <code className="bg-fm-surface px-1 rounded">/start 08xxxxxxxxxx</code> (your number)</li>
-                      <li>Bot will confirm registration</li>
-                      <li>Then click "Send OTP" below</li>
+                      <li>Telegram app opens (or web.telegram.org)</li>
+                      <li>Confirm login and grant phone number access</li>
+                      <li>Automatically returns here to create your key</li>
                     </ol>
                   </div>
-                  <p className="text-sm text-fm-text-dim">
-                    We'll send a 5-digit OTP to your registered Telegram chat.
-                  </p>
-                  {error && <p className="text-sm text-fm-red">{error}</p>}
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: OTP */}
-            {step === 'otp' && (
-              <div className="modal-body">
-                <div className="space-y-4">
-                  <div>
-                    <label className="input-label">OTP code (5 digits)</label>
-                    <input
-                      type="text"
-                      value={otp}
-                      onChange={e => { setOtp(e.target.value.replace(/\D/g, '').slice(0, 5)); setError(''); }}
-                      placeholder="12345"
-                      className="input-field text-2xl tracking-widest text-center font-mono"
-                      autoFocus
-                      maxLength={5}
-                    />
-                  </div>
-                  <p className="text-sm text-fm-text-dim text-center">
-                    OTP sent to Telegram <span className="text-fm-text">{phoneNumber}</span>
-                  </p>
-                  <p className="text-sm text-fm-text-dim text-center">Valid for 5 minutes</p>
+                  
                   {error && <p className="text-sm text-fm-red text-center">{error}</p>}
+                  
+                  {loading && (
+                    <div className="flex items-center justify-center py-4">
+                      <svg className="animate-spin h-6 w-6 text-fm-green" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span className="ml-2 text-fm-text">Authenticating...</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Step 4: Success */}
+            {/* Step 3: Success */}
             {step === 'success' && (
               <div className="modal-body text-center">
                 <div className="w-16 h-16 mx-auto mb-4 bg-fm-green/10 rounded-full flex items-center justify-center">
@@ -350,24 +374,13 @@ export function ApiKeysPanel({
             <div className="modal-footer">
               {step === 'name' && (
                 <button onClick={handleCreateStart} disabled={loading} className="btn-primary">
-                  {loading ? 'Processing...' : 'Continue'}
+                  {loading ? 'Processing...' : 'Continue with Telegram'}
                 </button>
               )}
-              {step === 'phone' && (
-                <>
-                  <button onClick={() => setStep('name')} className="btn-secondary">Back</button>
-                  <button onClick={handleSendOtp} disabled={loading} className="btn-primary">
-                    {loading ? 'Sending...' : 'Send OTP'}
-                  </button>
-                </>
-              )}
-              {step === 'otp' && (
-                <>
-                  <button onClick={() => setStep('phone')} className="btn-secondary">Back</button>
-                  <button onClick={handleVerifyOtp} disabled={loading} className="btn-primary">
-                    {loading ? 'Verifying...' : 'Verify & create'}
-                  </button>
-                </>
+              {step === 'telegram' && (
+                <button onClick={() => setStep('name')} className="btn-secondary" disabled={loading}>
+                  Back
+                </button>
               )}
             </div>
           </div>
