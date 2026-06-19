@@ -78,3 +78,25 @@ export interface TelegramAuthData {
   hash: string;
   phone_number?: string;
 }
+
+// tgauth.io request/response shapes
+export interface SendOtpRequest {
+  phone: string;
+}
+
+export interface SendOtpResponseBody {
+  success: boolean;
+  message?: string;
+  expiresIn?: number;
+}
+
+export interface VerifyOtpRequestBody {
+  phone: string;
+  code: string;
+}
+
+export interface VerifyOtpResponseBody {
+  key?: string;
+  prefix?: string;
+  rawKey?: string;
+}

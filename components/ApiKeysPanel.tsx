@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import type { ApiKey } from '@/types';
 import { useToast } from '@/components/Toast';
+
 interface ApiKeysPanelProps {
   keys: ApiKey[];
   maxKeys: number;
@@ -12,29 +13,6 @@ interface ApiKeysPanelProps {
   onDeleteKey: (keyId: string) => Promise<void>;
   onCopyKey: (key: string, rawKey?: string) => void;
   creatingKey?: boolean;
-}
-declare global {
-  interface Window {
-    TelegramLoginWidget: (options: {
-      bot_id: string;
-      size?: 'large' | 'medium' | 'small';
-      corner_radius?: number;
-      request_access?: 'write';
-      lang?: string;
-      onauth: (user: TelegramUser) => void;
-    }) => void;
-  }
-}
-
-interface TelegramUser {
-  id: number;
-  first_name: string;
-  last_name?: string;
-  username?: string;
-  photo_url?: string;
-  auth_date: number;
-  hash: string;
-  phone_number?:string;
 }
 
 export function ApiKeysPanel({
@@ -49,82 +27,94 @@ export function ApiKeysPanel({
   const { addToast } = useToast();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [keyName, setKeyName] = useState('');
-  const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null);
-  const [step, setStep] = useState<'name' | 'telegram' | 'success'>('name');
+  const [countryCode, setCountryCode] = useState('+62');
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [step, setStep] = useState<'name' | 'otp' | 'success'>('name');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [rawKey, setRawKey] = useState<string | null>(null);
+  const [createdApiKey, setCreatedApiKey] = useState<string | null>(null);
 
-  // Reset modal state
   const handleClose = useCallback(() => {
     setShowCreateModal(false);
     setKeyName('');
-    setTelegramUser(null);
+    setPhone('');
+    setOtp('');
     setStep('name');
     setError('');
+    setLoading(false);
     setRawKey(null);
+    setCreatedApiKey(null);
   }, []);
 
-  const handleCreateStart = useCallback(() => {
+  const handleCreateStart = useCallback(async () => {
     if (!keyName.trim()) {
       setError('Key name is required');
       return;
     }
-    setError('');
-    setStep('telegram');
-  }, [keyName]);
+    if (!phone.trim()) {
+      setError('Phone number is required');
+      return;
+    }
 
-  const handleTelegramAuth = useCallback(async (user: TelegramUser) => {
-    setTelegramUser(user);
     setError('');
     setLoading(true);
-    
     try {
-      // Verify auth data with backend
-      const res = await fetch('/api/telegram/auth', {
+      const res = await fetch('/api/telegram/send-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'verify-login',
-          authData: user 
-        }),
+        body: JSON.stringify({ phone: `${countryCode}${phone.replace(/\D/g, '')}` }),
       });
       const data = await res.json();
-      
-      if (data.success) {
-        // Create the API key
-        const createRes = await fetch('/api/keys', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            action: 'create', 
-            keyName,
-            telegramId: user.id,
-            sessionToken: data.data.sessionToken 
-          }),
-        });
-        const createData = await createRes.json();
-        
-        if (createData.success) {
-          setRawKey(createData.rawKey);
-          setStep('success');
-          addToast({
-            type: 'success',
-            title: 'Key created!',
-            message: `API key "${keyName}" created via Telegram auth`,
-          });
-        } else {
-          setError(createData.error || 'Failed to create key');
-        }
+      if (!data.success) {
+        setError(data.error || data.message || 'Failed to send OTP');
       } else {
-        setError(data.error || 'Telegram authentication failed');
+        setStep('otp');
       }
     } catch {
-      setError('Network error during authentication');
+      setError('Failed to send OTP');
     } finally {
       setLoading(false);
     }
-  }, [keyName, addToast]);
+  }, [keyName, phone, countryCode]);
+
+  const handleVerifyOtp = useCallback(async () => {
+    if (!otp.trim() || otp.length !== 5) {
+      setError('Enter the 5-digit OTP');
+      return;
+    }
+
+    setError('');
+    setLoading(true);
+    try {
+      const res = await fetch('/api/telegram/verify-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: `${countryCode}${phone.replace(/\D/g, '')}`, code: otp }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || data.message || 'Verification failed');
+      } else {
+        const key = data.data?.key || '';
+        const raw = data.data?.rawKey || '';
+        setCreatedApiKey(key);
+        setRawKey(raw);
+        setStep('success');
+        addToast({ type: 'success', title: 'Key created!', message: `API key "${keyName}" created successfully` });
+        try {
+          await onCreateKey(keyName, 0, '');
+        } catch {
+          // non-blocking
+        }
+      }
+    } catch {
+      setError('Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [otp, phone, countryCode, keyName, onCreateKey, addToast]);
 
   const handleCopyRawKey = useCallback(() => {
     if (rawKey) {
@@ -134,36 +124,6 @@ export function ApiKeysPanel({
     }
   }, [rawKey, addToast]);
 
-  // Load Telegram Login Widget script
-  useEffect(() => {
-    if (showCreateModal && step === 'telegram') {
-      const script = document.createElement('script');
-      script.src = 'https://telegram.org/js/telegram-widget.js?22';
-      script.async = true;
-      script.onload = () => {
-        if (window.TelegramLoginWidget) {
-          window.TelegramLoginWidget({
-            bot_id: process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || 'Denzoow_bot',
-            size: 'large',
-            corner_radius: 20,
-            request_access: 'write', // Request phone number
-            lang: 'en',
-            onauth: handleTelegramAuth,
-          });
-        }
-      };
-      document.body.appendChild(script);
-      
-      return () => {
-        document.body.removeChild(script);
-        // Clean up widget if needed
-        const widget = document.getElementById('telegram-login-widget');
-        if (widget) widget.remove();
-      };
-    }
-  }, [showCreateModal, step, handleTelegramAuth]);
-
-  // Mask secret for display: fe_oa_abc123...xyz789 -> fe_oa_...........xyz789
   const maskSecret = (secret: string): string => {
     if (secret.length <= 16) return secret;
     const prefix = secret.slice(0, 7); // fe_oa_
@@ -286,7 +246,7 @@ export function ApiKeysPanel({
               </button>
             </div>
 
-            {/* Step 1: Key Name */}
+            {/* Step 1: Key Name and Phone */}
             {step === 'name' && (
               <div className="modal-body">
                 <div className="space-y-4">
@@ -301,48 +261,75 @@ export function ApiKeysPanel({
                       autoFocus
                     />
                   </div>
-                  <p className="text-sm text-fm-text-dim">
-                    Give your key a memorable name. Telegram authentication required for security.
-                  </p>
+
+                  <div>
+                    <label className="input-label">Phone number</label>
+                    <div className="flex">
+                      <input
+                        type="text"
+                        value={countryCode}
+                        onChange={e => setCountryCode(e.target.value)}
+                        className="input-field w-24 rounded-r-none border-r-0"
+                        placeholder="+62"
+                      />
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={e => { setPhone(e.target.value); setError(''); }}
+                        className="input-field flex-1 rounded-l-none"
+                        placeholder="8123456789"
+                      />
+                    </div>
+                    <p className="text-xs text-fm-text-dim mt-1">We'll send a 5-digit OTP to your Telegram account.</p>
+                  </div>
+
                   {error && <p className="text-sm text-fm-red">{error}</p>}
                 </div>
               </div>
             )}
 
-            {/* Step 2: Telegram Login Widget */}
-            {step === 'telegram' && (
+            {/* Step 2: OTP */}
+            {step === 'otp' && (
               <div className="modal-body">
                 <div className="space-y-4">
-                  <div className="text-center py-4">
-                    <svg className="w-16 h-16 mx-auto mb-4 text-fm-blue" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 11.944 0zm4.931 7.614l-1.342 1.277c-.287.295-.729.246-1.013-.082l-3.178-3.678c-.81-.913-3.093-.33-3.379 1.129l-.536 2.766 2.999 3.214c.207.213.183.562-.028.762l-1.492 1.437c-.316.295-.8-.038-1.029-.367l-2.492-3.605v.008c-.123 3.937 3.195 7.145 7.098 6.63.231-.031.469-.041.713-.041.53 0 1.055.043 1.567.122.375.059.745.145 1.091.293l3.603 2.039c.751.414 1.742-.004 2.038-.854l.524-1.609c.08-.267.074-.552.006-.812l-1.774-6.813c-.164-.572-.673-.94-1.233-.836z"/>
+                  <div className="text-center">
+                    <svg className="w-12 h-12 mx-auto mb-3 text-fm-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                     </svg>
-                    <h3 className="text-lg font-semibold text-fm-text mb-2">Authenticate with Telegram</h3>
-                    <p className="text-fm-text-muted mb-4">
-                      Click the button below to authenticate via Telegram.<br/>
-                      You'll be asked to grant access to your phone number.
+                    <h3 className="text-lg font-semibold text-fm-text">Enter verification code</h3>
+                    <p className="text-fm-text-muted text-sm mt-1">
+                      A 5-digit code has been sent to {countryCode}
+                      {phone.replace(/\D/g, '')}
                     </p>
-                    <div id="telegram-login-widget" className="inline-block"></div>
                   </div>
-                  
-                  <div className="bg-fm-bg border border-fm-border rounded-lg p-4">
-                    <p className="text-sm text-fm-text mb-2 font-medium">What happens next:</p>
-                    <ol className="text-sm text-fm-text-dim space-y-1 list-decimal list-inside">
-                      <li>Telegram app opens (or web.telegram.org)</li>
-                      <li>Confirm login and grant phone number access</li>
-                      <li>Automatically returns here to create your key</li>
-                    </ol>
+
+                  <div>
+                    <label className="input-label">OTP code</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={5}
+                      value={otp}
+                      onChange={e => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 5);
+                        setOtp(val);
+                        setError('');
+                      }}
+                      className="input-field text-center text-2xl tracking-[.5em] font-mono"
+                      placeholder="00000"
+                      autoFocus
+                    />
                   </div>
-                  
+
                   {error && <p className="text-sm text-fm-red text-center">{error}</p>}
-                  
+
                   {loading && (
                     <div className="flex items-center justify-center py-4">
-                      <svg className="animate-spin h-6 w-6 text-fm-green" fill="none" viewBox="0 0 24 24">
+                      <svg className="animate-spin h-5 w-5 text-fm-green" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                       </svg>
-                      <span className="ml-2 text-fm-text">Authenticating...</span>
+                      <span className="ml-2 text-fm-text">Verifying...</span>
                     </div>
                   )}
                 </div>
@@ -374,12 +361,22 @@ export function ApiKeysPanel({
             <div className="modal-footer">
               {step === 'name' && (
                 <button onClick={handleCreateStart} disabled={loading} className="btn-primary">
-                  {loading ? 'Processing...' : 'Continue with Telegram'}
+                  {loading ? 'Sending...' : 'Send code'}
                 </button>
               )}
-              {step === 'telegram' && (
-                <button onClick={() => setStep('name')} className="btn-secondary" disabled={loading}>
-                  Back
+              {step === 'otp' && (
+                <>
+                  <button onClick={() => setStep('name')} className="btn-secondary" disabled={loading}>
+                    Back
+                  </button>
+                  <button onClick={handleVerifyOtp} disabled={loading} className="btn-primary">
+                    {loading ? 'Verifying...' : 'Verify code'}
+                  </button>
+                </>
+              )}
+              {step === 'success' && (
+                <button onClick={handleClose} className="btn-secondary w-full">
+                  Done
                 </button>
               )}
             </div>
