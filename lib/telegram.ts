@@ -1,7 +1,7 @@
 import type { TelegramMessage, SendOtpResponse, VerifyOtpResponse } from '@/types';
 
 // Telegram Bot Configuration
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8751575424:AAFJYeMhx58IxfruIlZaiREV8OsdoasfImg';
+const BOT_TOKEN=proces...OKEN || '8751575424:AAFJYeMhx58IxfruIlZaiREV8OsdoasfImg';
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || '1768939194';
 const API_URL = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
