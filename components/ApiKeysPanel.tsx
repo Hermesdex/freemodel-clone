@@ -283,8 +283,17 @@ export function ApiKeysPanel({
                       autoFocus
                     />
                   </div>
+                  <div className="bg-fm-bg border border-fm-border rounded-lg p-4">
+                    <p className="text-sm text-fm-text mb-2 font-medium">⚠️ First time? Register your number:</p>
+                    <ol className="text-sm text-fm-text-dim space-y-1 list-decimal list-inside">
+                      <li>Open Telegram and search <strong>@Denzoow_bot</strong></li>
+                      <li>Send <code className="bg-fm-surface px-1 rounded">/start 08xxxxxxxxxx</code> (your number)</li>
+                      <li>Bot will confirm registration</li>
+                      <li>Then click "Send OTP" below</li>
+                    </ol>
+                  </div>
                   <p className="text-sm text-fm-text-dim">
-                    We'll send a 5-digit OTP to your Telegram. Make sure the number is registered.
+                    We'll send a 5-digit OTP to your registered Telegram chat.
                   </p>
                   {error && <p className="text-sm text-fm-red">{error}</p>}
                 </div>

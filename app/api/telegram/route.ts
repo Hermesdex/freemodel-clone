@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendOtpToTelegram, verifyOtp, isOtpVerified, consumeOtpVerification, generateOtp } from '@/lib/telegram';
+import { 
+  sendOtpToTelegram, 
+  verifyOtp, 
+  isOtpVerified, 
+  consumeOtpVerification, 
+  generateOtp,
+  registerPhoneChatId,
+  getChatIdForPhone,
+  formatPhoneNumber
+} from '@/lib/telegram';
 import { createApiKey } from '@/lib/storage';
 import type { ApiResponse, SendOtpResponse, CreateKeyResponse } from '@/types';
 
@@ -12,16 +21,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!phoneNumber) {
         return NextResponse.json<SendOtpResponse>({
           success: false,
-          message: 'Nomor Telegram wajib diisi',
+          message: 'Telegram number is required',
           expiresIn: 0,
         }, { status: 400 });
       }
 
-      // Generate OTP first
       const generatedOtp = generateOtp();
       const result = await sendOtpToTelegram(phoneNumber, generatedOtp);
       return NextResponse.json<SendOtpResponse>(result, { 
-        status: result.success ? 200 : 500 
+        status: result.success ? 200 : 400 // 400 for user errors (not registered)
       });
     }
 
@@ -29,7 +37,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!phoneNumber || !otp) {
         return NextResponse.json<ApiResponse>({
           success: false,
-          error: 'Nomor dan OTP wajib diisi',
+          error: 'Phone number and OTP are required',
         }, { status: 400 });
       }
 
@@ -43,33 +51,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!phoneNumber || !keyName) {
         return NextResponse.json<ApiResponse>({
           success: false,
-          error: 'Nomor dan nama key wajib diisi',
+          error: 'Phone number and key name are required',
         }, { status: 400 });
       }
 
-      // Verify OTP was completed
       if (!isOtpVerified(phoneNumber)) {
         return NextResponse.json<ApiResponse>({
           success: false,
-          error: 'Verifikasi OTP belum selesai',
+          error: 'OTP verification not completed',
         }, { status: 401 });
       }
 
-      // Consume the verification
       const consumed = consumeOtpVerification(phoneNumber);
       if (!consumed) {
         return NextResponse.json<ApiResponse>({
           success: false,
-          error: 'Sesi verifikasi tidak valid',
+          error: 'Invalid verification session',
         }, { status: 401 });
       }
 
-      // Create the API key
       const newKey = createApiKey('user_coinpump', keyName);
       if (!newKey) {
         return NextResponse.json<ApiResponse>({
           success: false,
-          error: 'Gagal membuat API key',
+          error: 'Failed to create API key',
         }, { status: 500 });
       }
 
@@ -81,15 +86,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json<CreateKeyResponse>(response, { status: 201 });
     }
 
+    if (action === 'register-phone') {
+      // For testing: manually register a phone with a chat_id
+      if (!phoneNumber) {
+        return NextResponse.json<ApiResponse>({
+          success: false,
+          error: 'Phone number required',
+        }, { status: 400 });
+      }
+      
+      // This would normally come from webhook, but allow manual for testing
+      const chatId = parseInt(body.chatId || '1768939194');
+      registerPhoneChatId(phoneNumber, chatId);
+      
+      return NextResponse.json<ApiResponse>({
+        success: true,
+        message: `Registered ${phoneNumber} to chat_id ${chatId}`,
+      });
+    }
+
+    if (action === 'check-registration') {
+      if (!phoneNumber) {
+        return NextResponse.json<ApiResponse>({
+          success: false,
+          error: 'Phone number required',
+        }, { status: 400 });
+      }
+      
+      const chatId = getChatIdForPhone(phoneNumber);
+      return NextResponse.json<ApiResponse<{ registered: boolean; chatId: number | null }>>({
+        success: true,
+        data: { 
+          registered: !!chatId, 
+          chatId 
+        },
+      });
+    }
+
     return NextResponse.json<ApiResponse>({
       success: false,
-      error: 'Action tidak valid',
+      error: 'Invalid action',
     }, { status: 400 });
   } catch (error) {
     console.error('Telegram API error:', error);
     return NextResponse.json<ApiResponse>({
       success: false,
-      error: 'Terjadi kesalahan server',
+      error: 'Server error',
     }, { status: 500 });
   }
 }
