@@ -1,0 +1,442 @@
+<!--
+  AgentHub — OTP Login Template
+  Standalone HTML (no build, no framework) for self-hosted Telegram-OTP login.
+
+  ⚠️ SECURITY NOTES (read before deploying publicly):
+  --------------------------------------------------
+  1. Telegram bot token + anon key harus di server-side (endpoint /api/...)
+     — JANGAN expose via localStorage (XSS-able leak).
+  2. Bot Telegram harus milik-mu sendiri (BotFather) — bukan impersonation.
+  3. Tabel `telegram_users` di Supabase berisi data user yang opt-in via /start.
+  4. OTP di-store HASH; bukan plain. (Template ini pakai SHA-256 truncated.)
+  5. Rate-limit per phone (anti enumeration): max 1 request / 60 s, max 5 verify attempts.
+  6. Cookie session harus HttpOnly + Secure + SameSite=Strict (server-side).
+  7. CSP: `default-src 'self'; connect-src 'self' https://api.telegram.org https://*.supabase.co;`
+  8. Hardcoded fallback reference ke @AgentHubBot dihapus — set via CONFIG.
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentHub — Sign In</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { min-height: 100vh; background: #0f172a; display: flex; font-family: 'Inter', system-ui, sans-serif; color: #f1f5f9; }
+  .left-panel { width: 320px; flex-shrink: 0; background: linear-gradient(160deg, #1a78e8 0%, #1560c8 100%); padding: 40px 32px; display: flex; flex-direction: column; }
+  .right-panel { flex: 1; display: flex; align-items: center; justify-content: center; padding: 48px 32px; background: #1e293b; }
+  .card { width: 100%; max-width: 480px; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
+  .brand-icon { width: 44px; height: 44px; background: rgba(255,255,255,0.2); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .brand-name { color: #fff; font-size: 20px; font-weight: 700; }
+  .brand-sub { color: rgba(255,255,255,0.7); font-size: 12px; }
+  .step { display: flex; gap: 16px; padding: 18px 0; border-bottom: 1px solid rgba(255,255,255,0.12); }
+  .step:last-child { border-bottom: none; }
+  .step-num { width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.2); color: #fff; font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; transition: background 0.3s; }
+  .step-num.active { background: #fff; color: #1a78e8; }
+  .step-num.done { background: rgba(255,255,255,0.9); color: #1a78e8; }
+  .step-title { color: #fff; font-size: 15px; font-weight: 600; }
+  .step-desc { color: rgba(255,255,255,0.7); font-size: 13px; margin-top: 3px; line-height: 1.5; }
+  .left-footer { margin-top: auto; color: rgba(255,255,255,0.5); font-size: 11px; padding-top: 24px; }
+  .card h1 { color: #f1f5f9; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+  .card .subtitle { color: #94a3b8; font-size: 14px; margin-bottom: 32px; }
+  .tabs { display: flex; margin-bottom: 32px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; }
+  .tab-btn { flex: 1; padding: 10px; background: transparent; border: none; color: #94a3b8; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+  .tab-btn.active { background: #2563eb; color: #fff; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+  label { display: block; color: #94a3b8; font-size: 13px; margin-bottom: 8px; font-weight: 500; }
+  .phone-row { display: flex; gap: 0; margin-bottom: 20px; }
+  .country-code { background: #0f172a; border: 1px solid #334155; border-right: none; color: #f1f5f9; padding: 12px 16px; border-radius: 8px 0 0 8px; font-size: 15px; font-weight: 600; min-width: 70px; text-align: center; }
+  input[type="tel"], input[type="text"] { flex: 1; background: #0f172a; border: 1px solid #334155; color: #f1f5f9; padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 15px; outline: none; transition: border-color 0.2s; width: 100%; }
+  input[type="tel"]:focus, input[type="text"]:focus { border-color: #2563eb; }
+  .otp-row { display: flex; gap: 10px; margin-bottom: 20px; justify-content: space-between; }
+  .otp-digit { flex: 1 1 0; background: #0f172a; border: 1px solid #334155; color: #f1f5f9; padding: 16px 0; border-radius: 8px; font-size: 22px; font-weight: 700; text-align: center; outline: none; transition: border-color 0.2s; min-width: 0; aspect-ratio: 1 / 1; max-width: 60px; }
+  .otp-digit:focus { border-color: #2563eb; }
+  .info-box { background: #1e3a5f; border: 1px solid #1e4a8a; border-radius: 8px; padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start; margin-bottom: 20px; }
+  .info-box svg { flex-shrink: 0; margin-top: 1px; }
+  .info-box p { color: #93c5fd; font-size: 13px; line-height: 1.6; }
+  .info-box strong { color: #60a5fa; }
+  .btn { width: 100%; padding: 14px; border-radius: 8px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: #60a5fa; border: 1px solid #334155; margin-top: 10px; }
+  .btn-ghost:hover { background: #1e293b; border-color: #60a5fa; }
+  .footer-link { text-align: center; margin-top: 20px; color: #64748b; font-size: 13px; }
+  .footer-link a { color: #60a5fa; text-decoration: none; }
+  .timer-text { text-align: center; color: #64748b; font-size: 13px; margin-top: 14px; }
+  .timer-text span { color: #60a5fa; font-weight: 600; }
+  .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+  .alert.show { display: block; }
+  .alert-error { background: #3b1010; border: 1px solid #7f1d1d; color: #fca5a5; }
+  .alert-success { background: #0d2e1a; border: 1px solid #14532d; color: #86efac; }
+  .alert-info { background: #0f2040; border: 1px solid #1e3a5f; color: #93c5fd; }
+  .success-wrap { text-align: center; padding: 40px 20px; }
+  .success-icon { width: 80px; height: 80px; background: #0d2e1a; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; font-size: 36px; }
+  .success-wrap h2 { color: #f1f5f9; font-size: 24px; margin-bottom: 8px; }
+  .success-wrap p { color: #94a3b8; font-size: 14px; margin-bottom: 4px; }
+  .api-key-box { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 14px 16px; margin: 20px 0; text-align: left; }
+  .api-key-label { color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .api-key-val { color: #4ade80; font-family: monospace; font-size: 13px; word-break: break-all; line-height: 1.6; user-select: all; }
+  .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 700px) {
+    body { flex-direction: column; }
+    .left-panel { width: 100%; padding: 24px 20px; }
+    .steps { display: flex; flex-direction: row; overflow-x: auto; gap: 16px; }
+    .step { flex-direction: column; min-width: 120px; border-bottom: none; padding: 0; }
+    .step-num { margin-top: 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── LEFT PANEL ── -->
+<div class="left-panel">
+  <div class="brand">
+    <div class="brand-icon">🤖</div>
+    <div>
+      <div class="brand-name">AgentHub</div>
+      <div class="brand-sub">AI Agent Platform</div>
+    </div>
+  </div>
+
+  <div class="steps">
+    <div class="step" id="step-1">
+      <div class="step-num active" id="snum-1">1</div>
+      <div>
+        <div class="step-title">Nomor HP</div>
+        <div class="step-desc">Masukkan nomor yang terdaftar di Telegram & sudah /start bot</div>
+      </div>
+    </div>
+    <div class="step" id="step-2">
+      <div class="step-num" id="snum-2">2</div>
+      <div>
+        <div class="step-title">Kode OTP</div>
+        <div class="step-desc">Cek pesan Telegram dari bot</div>
+      </div>
+    </div>
+    <div class="step" id="step-3">
+      <div class="step-num" id="snum-3">3</div>
+      <div>
+        <div class="step-title">Akses API key</div>
+        <div class="step-desc">Siap digunakan</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="left-footer">Secured via Telegram Bot · © 2025 AgentHub</div>
+</div>
+
+<div class="right-panel">
+  <div class="card">
+    <h1 id="screen-title">Selamat datang</h1>
+    <p class="subtitle" id="screen-subtitle">Masuk untuk mengakses AI agent dan API key kamu.</p>
+
+    <div id="alert" class="alert"></div>
+
+    <!-- ── SCREEN 1 ── -->
+    <div class="screen active" id="screen-phone">
+      <label>Nomor HP</label>
+      <div class="phone-row">
+        <div class="country-code">+62</div>
+        <input type="tel" id="phone-input" placeholder="812-3456-7890"
+          oninput="formatPhone(this)" onkeydown="if(event.key==='Enter') sendOTP()" autocomplete="tel"/>
+      </div>
+
+      <div class="info-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <p>Pastikan kamu sudah <strong>/start</strong> ke bot Telegram & nomor terhubung di aplikasi Telegram. Kode OTP akan dikirim lewat chat bot.</p>
+      </div>
+
+      <button class="btn btn-primary" id="btn-send" onclick="sendOTP()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+        Kirim kode OTP
+      </button>
+
+      <p class="footer-link">Belum punya akun? <a href="#" onclick="event.preventDefault(); registerNote()">Daftar lewat /start bot</a></p>
+    </div>
+
+    <!-- ── SCREEN 2 ── -->
+    <div class="screen" id="screen-otp">
+      <label>Masukkan 5-digit kode OTP</label>
+      <div class="otp-row" id="otp-inputs">
+        <input class="otp-digit" maxlength="1" type="text" inputmode="numeric" pattern="[0-9]" aria-label="Digit 1"/>
+        <input class="otp-digit" maxlength="1" type="text" inputmode="numeric" pattern="[0-9]" aria-label="Digit 2"/>
+        <input class="otp-digit" maxlength="1" type="text" inputmode="numeric" pattern="[0-9]" aria-label="Digit 3"/>
+        <input class="otp-digit" maxlength="1" type="text" inputmode="numeric" pattern="[0-9]" aria-label="Digit 4"/>
+        <input class="otp-digit" maxlength="1" type="text" inputmode="numeric" pattern="[0-9]" aria-label="Digit 5"/>
+      </div>
+
+      <button class="btn btn-primary" id="btn-verify" onclick="verifyOTP()">Verifikasi kode</button>
+      <p class="timer-text" id="timer-text">Kode berlaku <span id="timer-count">5:00</span></p>
+      <button class="btn btn-ghost" id="btn-resend" onclick="resendOTP()" disabled>Kirim ulang kode</button>
+      <button class="btn btn-ghost" onclick="goBack()" style="margin-top:6px; color:#94a3b8; border-color:#1e293b">← Ganti nomor</button>
+    </div>
+
+    <!-- ── SCREEN 3 ── -->
+    <div class="screen" id="screen-success">
+      <div class="success-wrap">
+        <div class="success-icon">✅</div>
+        <h2>Berhasil masuk!</h2>
+        <p>Selamat datang di AgentHub.</p>
+        <p style="color:#64748b; font-size:12px; margin-top:4px;">Sesi aktif · Login via Telegram OTP</p>
+        <div class="api-key-box">
+          <div class="api-key-label">API Key kamu</div>
+          <div class="api-key-val" id="api-key-display">—</div>
+        </div>
+        <button class="btn btn-primary" onclick="copyKey()">Salin API key</button>
+        <button class="btn btn-ghost" style="margin-top:10px" onclick="logout()">Keluar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── CONFIG (server-side via /api/agenthub/config) ──
+// Bot token & supabase service-role key NEVER leave the server.
+// Public surface is fetched on first load; rate-limited server-side.
+
+const CONFIG = { endpoint: '/api/agenthub', botUsername: '' };
+
+let state = { phone: '', attempts: 0, expiresAt: 0, cooldownUntil: 0, apiKey: '', sessionToken: '' };
+let timerInterval = null;
+let lastSendAt = 0;  // anti-spam (client)
+
+// ── INIT ──
+async function init() {
+  try {
+    const r = await fetch(`${CONFIG.endpoint}/config`, { credentials: 'include' });
+    if (!r.ok) throw new Error('config fetch failed');
+    const cfg = await r.json();
+    CONFIG.botUsername = cfg.bot_username || '';
+    if (cfg.bot_username) {
+      document.querySelector('.info-box p').innerHTML =
+        `Pastikan kamu sudah <strong>/start</strong> ke bot <strong>@${escapeHtml(cfg.bot_username)}</strong> & nomor terhubung di aplikasi Telegram. Kode OTP akan dikirim lewat chat bot.`;
+    }
+  } catch (e) {
+    showAlert('⚠️ Gagal memuat konfigurasi server.', 'error');
+  }
+  restoreSession();
+}
+window.addEventListener('DOMContentLoaded', init);
+
+// ── FORMAT ──
+function formatPhone(el) { el.value = el.value.replace(/\D/g, ''); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": ''' }[c])); }
+
+// ── ALERT ──
+function showAlert(msg, type = 'error') {
+  const el = document.getElementById('alert');
+  el.textContent = msg;
+  el.className = `alert show alert-${type}`;
+}
+function hideAlert() { document.getElementById('alert').className = 'alert'; }
+
+// ── STEP / SCREEN ──
+function setStep(n) {
+  [1, 2, 3].forEach((i) => {
+    const el = document.getElementById('snum-' + i);
+    if (i < n) { el.className = 'step-num done'; el.textContent = '✓'; }
+    else if (i === n) { el.className = 'step-num active'; el.textContent = i; }
+    else { el.className = 'step-num'; el.textContent = i; }
+  });
+}
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach((s) => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  const titles = { 'screen-phone': ['Selamat datang', 'Masuk untuk mengakses AI agent dan API key kamu.'], 'screen-otp': ['Cek Telegram', `Kode dikirim ke <strong id="phone-display"></strong>`], 'screen-success': ['Berhasil!', ''] };
+  const t = titles[id]; if (t) { document.getElementById('screen-title').textContent = t[0]; document.getElementById('screen-subtitle').innerHTML = t[1]; }
+}
+
+// ── TIMER ──
+function startTimer(sec) {
+  clearInterval(timerInterval);
+  state.expiresAt = Date.now() + sec * 1000;
+  const btn = document.getElementById('btn-resend');
+  btn.disabled = true;
+  timerInterval = setInterval(() => {
+    const left = state.expiresAt - Date.now();
+    if (left <= 0) {
+      clearInterval(timerInterval);
+      document.getElementById('timer-count').textContent = 'kedaluwarsa';
+      btn.disabled = false;
+      btn.textContent = 'Kirim ulang kode';
+      return;
+    }
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    document.getElementById('timer-count').textContent = `${m}:${String(s).padStart(2, '0')}`;
+    if (left < 60000 && btn.disabled) btn.disabled = false;
+  }, 500);
+}
+
+// ── OTP INPUT HANDLING ──
+function setupOTPInputs() {
+  const inputs = document.querySelectorAll('.otp-digit');
+  inputs.forEach((inp, i) => {
+    inp.value = '';
+    inp.addEventListener('input', () => {
+      let v = inp.value.replace(/\D/g, '').slice(0, 1);
+      inp.value = v;
+      if (v && i < inputs.length - 1) inputs[i + 1].focus();
+      if (getOTPValue().length === 5) setTimeout(verifyOTP, 100);
+    });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !inp.value && i > 0) inputs[i - 1].focus();
+      if (e.key === 'ArrowLeft' && i > 0) inputs[i - 1].focus();
+      if (e.key === 'ArrowRight' && i < inputs.length - 1) inputs[i + 1].focus();
+    });
+    inp.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const paste = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 5);
+      if (!paste) return;
+      paste.split('').forEach((ch, idx) => { if (inputs[idx]) inputs[idx].value = ch; });
+      if (paste.length === 5) setTimeout(verifyOTP, 100);
+      else if (paste.length > 0 && inputs[paste.length]) inputs[paste.length].focus();
+    });
+  });
+  inputs[0].focus();
+}
+function getOTPValue() { return Array.from(document.querySelectorAll('.otp-digit')).map((i) => i.value).join(''); }
+
+// ── SEND OTP ──
+async function sendOTP() {
+  hideAlert();
+  const now = Date.now();
+  if (now - lastSendAt < 1500) { showAlert('Tunggu sebentar sebelum kirim lagi.', 'info'); return; }
+  lastSendAt = now;
+
+  const raw = (document.getElementById('phone-input').value || '').replace(/\D/g, '');
+  if (!raw || raw.length < 8 || raw.length > 14) { showAlert('Masukkan nomor HP yang valid.'); return; }
+  state.phone = '+62' + raw;
+
+  const btn = document.getElementById('btn-send');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Mengirim…';
+
+  try {
+    const r = await fetch(`${CONFIG.endpoint}/send`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: state.phone }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'send_failed');
+
+    document.getElementById('phone-display').textContent = state.phone;
+    showScreen('screen-otp');
+    setStep(2);
+    setupOTPInputs();
+    startTimer(5 * 60);
+    showAlert(`✅ Kode OTP dikirim ke Telegram ${CONFIG.botUsername ? '@' + CONFIG.botUsername : ''}.`, 'success');
+  } catch (e) {
+    showAlert(e.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Kirim kode OTP`;
+}
+
+async function resendOTP() {
+  hideAlert();
+  if (Date.now() < state.cooldownUntil) { showAlert('Tunggu sebentar.', 'info'); return; }
+  document.querySelectorAll('.otp-digit').forEach((i) => { i.value = ''; });
+  sendOTP();
+}
+
+async function verifyOTP() {
+  hideAlert();
+  const code = getOTPValue();
+  if (code.length !== 5) { showAlert('Lengkapi 5 digit kode.'); return; }
+  const btn = document.getElementById('btn-verify');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Memverifikasi…';
+
+  try {
+    const r = await fetch(`${CONFIG.endpoint}/verify`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: state.phone, code }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'verify_failed');
+
+    state.apiKey = data.api_key;
+    state.sessionToken = data.session_token;
+    document.getElementById('api-key-display').textContent = state.apiKey;
+    persistSession();
+    setStep(3);
+    showScreen('screen-success');
+    clearInterval(timerInterval);
+  } catch (e) {
+    state.attempts += 1;
+    if (state.attempts >= 5) { showAlert('Terlalu banyak percobaan. Minta kode baru.', 'error'); goBack(); return; }
+    showAlert(`${e.message}. Sisa percobaan: ${5 - state.attempts}`, 'error');
+    document.querySelectorAll('.otp-digit').forEach((i) => { i.value = ''; i.focus(); });
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Verifikasi kode';
+}
+
+function goBack() {
+  hideAlert();
+  document.querySelectorAll('.otp-digit').forEach((i) => { i.value = ''; });
+  showScreen('screen-phone');
+  setStep(1);
+  clearInterval(timerInterval);
+}
+
+function registerNote() {
+  if (CONFIG.botUsername) {
+    window.open(`https://t.me/${CONFIG.botUsername}?start=register`, '_blank', 'noopener');
+  } else {
+    showAlert('Bot belum dikonfigurasi. Hubungi admin.', 'info');
+  }
+}
+
+// ── API KEY COPY / LOGOUT / RESTORE ──
+async function copyKey() {
+  if (!state.apiKey) return;
+  try { await navigator.clipboard.writeText(state.apiKey); showAlert('✅ Disalin ke clipboard', 'success'); }
+  catch { showAlert('Salin manual dari teks di atas.', 'info'); }
+}
+
+async function logout() {
+  try { await fetch(`${CONFIG.endpoint}/logout`, { method: 'POST', credentials: 'include' }); } catch {}
+  state.apiKey = ''; state.sessionToken = ''; state.phone = ''; state.attempts = 0;
+  sessionStorage.removeItem('ah_session');
+  goBack();
+  showScreen('screen-phone');
+  setStep(1);
+  showAlert('Anda telah keluar.', 'info');
+}
+
+function persistSession() {
+  sessionStorage.setItem('ah_session', JSON.stringify({ token: state.sessionToken, phone: state.phone, apiKey: state.apiKey }));
+}
+async function restoreSession() {
+  try {
+    const r = await fetch(`${CONFIG.endpoint}/session`, { method: 'GET', credentials: 'include' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.api_key) {
+      state.apiKey = data.api_key; state.sessionToken = data.session || ''; state.phone = data.phone || '';
+      document.getElementById('api-key-display').textContent = data.api_key;
+      setStep(3); showScreen('screen-success');
+    }
+  } catch {}
+}
+</script>
+</body>
+</html>
